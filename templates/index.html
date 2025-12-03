@@ -36,32 +36,63 @@
       {% endif %}
     </section>
 
-    {% if original_url and prediction_url %}
     <section class="results">
       <div class="card">
         <h2>原图</h2>
-        <img src="{{ original_url }}" alt="用户上传图片">
+        <div class="image-box">
+          <img id="original-image" src="{{ original_url or '' }}" alt="用户上传图片" class="{% if not original_url %}hidden{% endif %}">
+          <div id="original-placeholder" class="placeholder {% if original_url %}hidden{% endif %}">上传后原图会显示在这里</div>
+        </div>
       </div>
       <div class="card">
         <h2>预测结果</h2>
-        <img src="{{ prediction_url }}" alt="模型预测图片">
+        <div class="image-box">
+          <img id="prediction-image" src="{{ prediction_url or '' }}" alt="模型预测图片" class="{% if not prediction_url %}hidden{% endif %}">
+          <div id="prediction-placeholder" class="placeholder {% if prediction_url %}hidden{% endif %}">预测结果会显示在这里</div>
+        </div>
       </div>
     </section>
-    {% endif %}
 
-    {% if counts %}
     <section class="card">
       <h2>识别统计</h2>
-      <div class="counts">
-        {% for name, total in counts.items() %}
-          <div class="count-row">
-            <span>{{ name }}</span>
-            <span class="badge">{{ total }}</span>
-          </div>
-        {% endfor %}
+      <div id="counts" class="counts">
+        {% if counts %}
+          {% for name, total in counts.items() %}
+            <div class="count-row">
+              <span>{{ name }}</span>
+              <span class="badge">{{ total }}</span>
+            </div>
+          {% endfor %}
+        {% else %}
+          <div class="placeholder inline">暂无统计数据</div>
+        {% endif %}
       </div>
     </section>
-    {% endif %}
   </main>
+  <script>
+    const fileInput = document.querySelector('input[name="image"]');
+    const originalImage = document.getElementById('original-image');
+    const originalPlaceholder = document.getElementById('original-placeholder');
+    const predictionImage = document.getElementById('prediction-image');
+    const predictionPlaceholder = document.getElementById('prediction-placeholder');
+    const countsContainer = document.getElementById('counts');
+
+    fileInput.addEventListener('change', (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const url = URL.createObjectURL(file);
+      originalImage.src = url;
+      originalImage.classList.remove('hidden');
+      originalPlaceholder.classList.add('hidden');
+
+      // Reset prediction image and counts when a new file is chosen
+      predictionImage.src = '';
+      predictionImage.classList.add('hidden');
+      predictionPlaceholder.classList.remove('hidden');
+      if (countsContainer) {
+        countsContainer.innerHTML = '<div class="placeholder inline">等待识别结果...</div>';
+      }
+    });
+  </script>
 </body>
 </html>

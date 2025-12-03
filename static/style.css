@@ -82,6 +82,35 @@ button:hover { opacity: 0.92; }
   border-radius: 10px;
   border: 1px solid #edf2f7;
 }
+.image-box {
+  position: relative;
+  width: 100%;
+  min-height: 240px;
+  border: 1px dashed #e2e8f0;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #f8fafc;
+}
+.image-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #fff;
+}
+.placeholder {
+  color: #718096;
+  text-align: center;
+  padding: 20px;
+}
+.placeholder.inline {
+  padding: 10px 0;
+}
+.hidden {
+  display: none;
+}
 .counts {
   display: flex;
   flex-direction: column;
