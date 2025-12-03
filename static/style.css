@@ -37,10 +37,11 @@ main {
 .tab {
   padding: 8px 14px;
   border: 1px solid #cbd5e0;
-  background: #f7fafc;
+  background: #f0f4ff;
   border-radius: 8px;
   cursor: pointer;
   font-weight: 600;
+  color: #1f2937;
 }
 .tab.active {
   background: linear-gradient(120deg, #38b2ac, #4299e1);
@@ -52,6 +53,13 @@ form {
   flex-wrap: wrap;
   gap: 12px;
   align-items: center;
+}
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 .field {
   display: flex;
@@ -86,9 +94,21 @@ button {
   font-weight: 600;
 }
 button:hover { opacity: 0.92; }
+.button.ghost, .ghost {
+  background: #f7fafc;
+  color: #1f2937;
+  border: 1px solid #cbd5e0;
+  box-shadow: none;
+}
+.button.ghost:hover, .ghost:hover { opacity: 0.9; }
 .error {
   margin-top: 10px;
   color: #c53030;
+}
+.status {
+  margin-top: 6px;
+  color: #2b6cb0;
+  font-weight: 600;
 }
 .results {
   display: grid;

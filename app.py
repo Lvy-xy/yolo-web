@@ -183,5 +183,27 @@ def handle_file_too_large(_error):  # pragma: no cover
     ), 413
 
 
+@app.route("/clear_cache", methods=["POST"])
+def clear_cache():
+    """Delete cached upload/prediction files except those explicitly kept."""
+    payload = request.get_json(force=True, silent=True) or {}
+    keep_files = {Path(name).name for name in payload.get("keep", []) if name}
+    removed = []
+    for folder in (UPLOAD_DIR, PRED_DIR):
+        if not folder.exists():
+            continue
+        for file in folder.iterdir():
+            if not file.is_file():
+                continue
+            if file.name in keep_files:
+                continue
+            try:
+                file.unlink()
+                removed.append(file.name)
+            except OSError:
+                continue
+    return jsonify({"removed": removed, "kept": list(keep_files)})
+
+
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)

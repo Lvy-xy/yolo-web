@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -9,16 +9,18 @@
 <body>
   <header>
     <h1>番茄花果识别</h1>
-    <p>上传一张图片，模型会预测番茄花与果实，并给出数量统计。</p>
+    <p>上传图片、拍照或实时摄像，模型预测番茄花与果实并输出数量统计。</p>
   </header>
 
   <main>
     <section class="card">
       <div class="tabs">
-        <button class="tab active" data-tab="upload-tab">上传图片</button>
-        <button class="tab" data-tab="camera-tab">摄像头拍摄</button>
+        <button class="tab active" data-tab="upload">上传图片</button>
+        <button class="tab" data-tab="camera">拍照上传图片</button>
+        <button class="tab" data-tab="live">摄像头实时识别</button>
       </div>
-      <div class="tab-content" id="upload-tab">
+
+      <div class="tab-content" id="tab-upload">
         <form method="POST" enctype="multipart/form-data">
           <div class="field">
             <label class="upload-label">
@@ -41,7 +43,7 @@
         {% endif %}
       </div>
 
-      <div class="tab-content hidden" id="camera-tab">
+      <div class="tab-content hidden" id="tab-camera">
         <div class="field">
           <label for="camera-model">选择模型</label>
           <select id="camera-model">
@@ -60,6 +62,28 @@
           <p id="camera-error" class="error"></p>
         </div>
       </div>
+
+      <div class="tab-content hidden" id="tab-live">
+        <div class="field">
+          <label for="live-model">选择模型</label>
+          <select id="live-model">
+            {% for m in available_models %}
+              <option value="{{ m.name }}" {% if selected_model and selected_model == m.name %}selected{% endif %}>{{ m.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="camera-box">
+          <video id="live-video" autoplay playsinline muted></video>
+          <canvas id="live-canvas" class="hidden"></canvas>
+          <div class="camera-actions">
+            <button id="live-start" type="button">打开摄像头</button>
+            <button id="live-run" type="button">开始实时识别</button>
+            <button id="live-stop" type="button">停止</button>
+          </div>
+          <p id="live-status" class="status"></p>
+          <p id="live-error" class="error"></p>
+        </div>
+      </div>
     </section>
 
     <section class="results">
@@ -67,7 +91,7 @@
         <h2>原图</h2>
         <div class="image-box">
           <img id="original-image" src="{{ original_url or '' }}" alt="用户上传图片" class="{% if not original_url %}hidden{% endif %}">
-          <div id="original-placeholder" class="placeholder {% if original_url %}hidden{% endif %}">上传后原图会显示在这里</div>
+          <div id="original-placeholder" class="placeholder {% if original_url %}hidden{% endif %}">原图会显示在这里</div>
         </div>
       </div>
       <div class="card">
@@ -80,7 +104,10 @@
     </section>
 
     <section class="card">
-      <h2>识别统计</h2>
+      <div class="card-header">
+        <h2>识别统计</h2>
+        <button id="clear-cache" type="button" class="ghost">清理历史缓存</button>
+      </div>
       <div id="counts" class="counts">
         {% if counts %}
           {% for name, total in counts.items() %}
@@ -93,6 +120,7 @@
           <div class="placeholder inline">暂无统计数据</div>
         {% endif %}
       </div>
+      <p id="cache-status" class="status"></p>
     </section>
   </main>
   <script>
@@ -103,49 +131,115 @@
     const predictionPlaceholder = document.getElementById('prediction-placeholder');
     const countsContainer = document.getElementById('counts');
     const tabs = document.querySelectorAll('.tab');
-    const tabContents = document.querySelectorAll('.tab-content');
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const startCameraBtn = document.getElementById('start-camera');
     const captureBtn = document.getElementById('capture');
     const cameraError = document.getElementById('camera-error');
     const cameraModelSelect = document.getElementById('camera-model');
+    const liveVideo = document.getElementById('live-video');
+    const liveCanvas = document.getElementById('live-canvas');
+    const liveStart = document.getElementById('live-start');
+    const liveRun = document.getElementById('live-run');
+    const liveStop = document.getElementById('live-stop');
+    const liveStatus = document.getElementById('live-status');
+    const liveError = document.getElementById('live-error');
+    const liveModelSelect = document.getElementById('live-model');
+    const clearCacheBtn = document.getElementById('clear-cache');
+    const cacheStatus = document.getElementById('cache-status');
     let stream = null;
+    let liveInterval = null;
+    let liveSending = false;
+    let activeTab = 'upload';
+
+    const initialCounts = {{ counts|tojson|default('null') }} || {};
+    const states = {
+      upload: { original: {{ (original_url or '')|tojson }}, prediction: {{ (prediction_url or '')|tojson }}, counts: initialCounts, message: null },
+      camera: { original: '', prediction: '', counts: {}, message: null },
+      live: { original: '', prediction: '', counts: {}, message: null },
+    };
+
+    function renderCounts(counts, message) {
+      countsContainer.innerHTML = '';
+      if (message) {
+        countsContainer.innerHTML = `<div class="placeholder inline">${message}</div>`;
+        return;
+      }
+      const entries = Object.entries(counts || {});
+      if (!entries.length) {
+        countsContainer.innerHTML = '<div class="placeholder inline">暂无统计数据</div>';
+        return;
+      }
+      entries.forEach(([name, total]) => {
+        const row = document.createElement('div');
+        row.className = 'count-row';
+        row.innerHTML = `<span>${name}</span><span class="badge">${total}</span>`;
+        countsContainer.appendChild(row);
+      });
+    }
+
+    function applyState(tab) {
+      const state = states[tab] || { original: '', prediction: '', counts: {}, message: null };
+      if (state.original) {
+        originalImage.src = state.original;
+        originalImage.classList.remove('hidden');
+        originalPlaceholder.classList.add('hidden');
+      } else {
+        originalImage.src = '';
+        originalImage.classList.add('hidden');
+        originalPlaceholder.classList.remove('hidden');
+      }
+
+      if (state.prediction) {
+        predictionImage.src = state.prediction;
+        predictionImage.classList.remove('hidden');
+        predictionPlaceholder.classList.add('hidden');
+      } else {
+        predictionImage.src = '';
+        predictionImage.classList.add('hidden');
+        predictionPlaceholder.classList.remove('hidden');
+      }
+
+      renderCounts(state.counts, state.message);
+    }
+
+    function setState(tab, data) {
+      states[tab] = { ...states[tab], ...data };
+      if (activeTab === tab) {
+        applyState(tab);
+      }
+    }
 
     fileInput.addEventListener('change', (event) => {
       const file = event.target.files?.[0];
       if (!file) return;
       const url = URL.createObjectURL(file);
-      originalImage.src = url;
-      originalImage.classList.remove('hidden');
-      originalPlaceholder.classList.add('hidden');
-
-      // Reset prediction image and counts when a new file is chosen
-      predictionImage.src = '';
-      predictionImage.classList.add('hidden');
-      predictionPlaceholder.classList.remove('hidden');
-      if (countsContainer) {
-        countsContainer.innerHTML = '<div class="placeholder inline">等待识别结果...</div>';
-      }
+      setState('upload', { original: url, prediction: '', counts: {}, message: '等待识别结果...' });
     });
 
     tabs.forEach(tab => {
       tab.addEventListener('click', () => {
         tabs.forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
-        tabContents.forEach(c => c.classList.add('hidden'));
-        document.getElementById(tab.dataset.tab).classList.remove('hidden');
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+        document.getElementById(`tab-${tab.dataset.tab}`).classList.remove('hidden');
+        activeTab = tab.dataset.tab;
+        applyState(activeTab);
       });
     });
 
     async function startCamera() {
       try {
-        if (stream) return;
-        stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        video.srcObject = stream;
+        if (!stream) {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        }
+        if (video) video.srcObject = stream;
+        if (liveVideo) liveVideo.srcObject = stream;
         cameraError.textContent = '';
+        liveError.textContent = '';
       } catch (err) {
         cameraError.textContent = '无法访问摄像头，请检查权限或设备。';
+        liveError.textContent = '无法访问摄像头，请检查权限或设备。';
       }
     }
 
@@ -164,44 +258,120 @@
         formData.append('image', blob, 'capture.png');
         formData.append('model_path', cameraModelSelect.value);
 
-        // Show captured frame as original preview
         const snapshotUrl = URL.createObjectURL(blob);
-        originalImage.src = snapshotUrl;
-        originalImage.classList.remove('hidden');
-        originalPlaceholder.classList.add('hidden');
-        predictionImage.src = '';
-        predictionImage.classList.add('hidden');
-        predictionPlaceholder.classList.remove('hidden');
-        countsContainer.innerHTML = '<div class="placeholder inline">识别中...</div>';
+        setState('camera', { original: snapshotUrl, prediction: '', counts: {}, message: '识别中...' });
 
         try {
           const response = await fetch('/predict', { method: 'POST', body: formData });
           const data = await response.json();
           if (!response.ok || data.error) {
             cameraError.textContent = data.error || '识别失败';
-            countsContainer.innerHTML = '<div class="placeholder inline">识别失败</div>';
+            setState('camera', { prediction: '', counts: {}, message: '识别失败' });
             return;
           }
-          predictionImage.src = data.prediction_url;
-          predictionImage.classList.remove('hidden');
-          predictionPlaceholder.classList.add('hidden');
-          countsContainer.innerHTML = '';
-          Object.entries(data.counts || {}).forEach(([name, total]) => {
-            const row = document.createElement('div');
-            row.className = 'count-row';
-            row.innerHTML = `<span>${name}</span><span class="badge">${total}</span>`;
-            countsContainer.appendChild(row);
-          });
+          setState('camera', { original: data.original_url, prediction: data.prediction_url, counts: data.counts || {}, message: null });
           cameraError.textContent = '';
         } catch (err) {
           cameraError.textContent = '识别请求失败，请重试。';
-          countsContainer.innerHTML = '<div class="placeholder inline">识别失败</div>';
+          setState('camera', { prediction: '', counts: {}, message: '识别失败' });
         }
       }, 'image/png');
     }
 
+    async function captureLiveFrame() {
+      if (liveSending || !stream) return;
+      if (!liveVideo.videoWidth || !liveVideo.videoHeight) return;
+      liveSending = true;
+      liveStatus.textContent = '实时识别中...';
+      const context = liveCanvas.getContext('2d');
+      liveCanvas.width = liveVideo.videoWidth;
+      liveCanvas.height = liveVideo.videoHeight;
+      context.drawImage(liveVideo, 0, 0, liveCanvas.width, liveCanvas.height);
+
+      const blob = await new Promise(resolve => liveCanvas.toBlob(resolve, 'image/jpeg', 0.8));
+      if (!blob) {
+        liveSending = false;
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('image', blob, 'live.jpg');
+      formData.append('model_path', liveModelSelect.value);
+
+      try {
+        const response = await fetch('/predict', { method: 'POST', body: formData });
+        const data = await response.json();
+        if (!response.ok || data.error) {
+          liveError.textContent = data.error || '实时识别失败';
+          liveStatus.textContent = '已暂停';
+          return;
+        }
+        setState('live', { original: data.original_url, prediction: data.prediction_url, counts: data.counts || {}, message: null });
+        liveError.textContent = '';
+      } catch (err) {
+        liveError.textContent = '实时识别请求失败';
+      } finally {
+        liveSending = false;
+      }
+    }
+
+    async function startLive() {
+      if (!stream) {
+        await startCamera();
+      }
+      if (liveInterval) return;
+      liveStatus.textContent = '实时识别中...';
+      liveInterval = setInterval(captureLiveFrame, 1200);
+      captureLiveFrame();
+    }
+
+    function stopLive() {
+      if (liveInterval) {
+        clearInterval(liveInterval);
+        liveInterval = null;
+      }
+      liveStatus.textContent = '已停止';
+      liveSending = false;
+    }
+
+    function collectKeepFiles() {
+      const names = new Set();
+      Object.values(states).forEach(state => {
+        [state.original, state.prediction].forEach(url => {
+          if (!url) return;
+          const parts = url.split('/');
+          const name = parts[parts.length - 1];
+          if (name) names.add(name);
+        });
+      });
+      return Array.from(names);
+    }
+
+    async function clearCache() {
+      const keep = collectKeepFiles();
+      cacheStatus.textContent = '清理中...';
+      try {
+        const response = await fetch('/clear_cache', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keep }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error('清理失败');
+        cacheStatus.textContent = `已清理 ${data.removed.length} 个文件；当前图片已保留。`;
+      } catch (err) {
+        cacheStatus.textContent = '清理缓存失败，请重试。';
+      }
+    }
+
     startCameraBtn.addEventListener('click', startCamera);
     captureBtn.addEventListener('click', captureAndPredict);
+    liveStart.addEventListener('click', startCamera);
+    liveRun.addEventListener('click', startLive);
+    liveStop.addEventListener('click', stopLive);
+    clearCacheBtn.addEventListener('click', clearCache);
+
+    applyState(activeTab);
   </script>
 </body>
 </html>
