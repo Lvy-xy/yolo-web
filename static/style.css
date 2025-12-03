@@ -29,6 +29,24 @@ main {
   padding: 16px;
   box-shadow: 0 10px 25px rgba(15, 23, 42, 0.05);
 }
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.tab {
+  padding: 8px 14px;
+  border: 1px solid #cbd5e0;
+  background: #f7fafc;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.tab.active {
+  background: linear-gradient(120deg, #38b2ac, #4299e1);
+  color: #fff;
+  border-color: #4299e1;
+}
 form {
   display: flex;
   flex-wrap: wrap;
@@ -81,6 +99,23 @@ button:hover { opacity: 0.92; }
   width: 100%;
   border-radius: 10px;
   border: 1px solid #edf2f7;
+}
+.camera-box {
+  border: 1px dashed #cbd5e0;
+  padding: 12px;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.camera-box video {
+  width: 100%;
+  border-radius: 10px;
+  background: #000;
+}
+.camera-actions {
+  display: flex;
+  gap: 10px;
 }
 .image-box {
   position: relative;

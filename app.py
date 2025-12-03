@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
-from flask import Flask, render_template, request, url_for
+from flask import Flask, jsonify, render_template, request, url_for
 from werkzeug.exceptions import RequestEntityTooLarge
 from ultralytics import YOLO
 
@@ -118,6 +118,56 @@ def index():
         )
 
     return render_template("index.html", **context)
+
+
+def _process_upload(file_storage, selected_model_name: str | None) -> Tuple[str, str, Dict[str, int]]:
+    available_models = list_models()
+    if selected_model_name:
+        selected_model_path = MODEL_DIR / selected_model_name
+    elif available_models:
+        selected_model_path = DEFAULT_MODEL if DEFAULT_MODEL.exists() else available_models[0]
+    else:
+        raise ValueError("No available models.")
+
+    if not selected_model_path.exists():
+        raise FileNotFoundError("Selected model not found.")
+
+    unique_name = f"{uuid.uuid4().hex}{Path(file_storage.filename).suffix.lower()}"
+    saved_path = UPLOAD_DIR / unique_name
+    pred_path = PRED_DIR / unique_name
+    file_storage.save(saved_path)
+
+    model = _load_model(selected_model_path)
+    counts = run_inference(model, saved_path, pred_path)
+
+    return (
+        url_for("static", filename=f"uploads/{unique_name}"),
+        url_for("static", filename=f"predictions/{unique_name}"),
+        counts,
+    )
+
+
+@app.route("/predict", methods=["POST"])
+def predict():
+    upload = request.files.get("image")
+    selected_model_name = request.form.get("model_path")
+
+    if not upload or upload.filename == "":
+        return jsonify({"error": "请上传图片"}), 400
+    if not _is_allowed(upload.filename):
+        return jsonify({"error": f"仅支持: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
+    try:
+        original_url, prediction_url, counts = _process_upload(upload, selected_model_name)
+    except Exception as exc:  # pragma: no cover
+        return jsonify({"error": str(exc)}), 500
+
+    return jsonify(
+        {
+            "original_url": original_url,
+            "prediction_url": prediction_url,
+            "counts": counts,
+        }
+    )
 
 
 @app.errorhandler(RequestEntityTooLarge)
