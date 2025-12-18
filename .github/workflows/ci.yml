@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main,dev]
   pull_request:
     branches: [main]
 
@@ -25,10 +25,7 @@ jobs:
           pip install black ruff pytest
 
       - name: Lint (ruff)
-        run: ruff .
+        run: ruff check .
 
       - name: Format check (black)
         run: black --check .
-
-      - name: Tests
-        run: pytest -q

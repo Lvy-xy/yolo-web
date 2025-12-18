@@ -172,15 +172,18 @@ def predict():
 
 @app.errorhandler(RequestEntityTooLarge)
 def handle_file_too_large(_error):  # pragma: no cover
-    return render_template(
-        "index.html",
-        original_url=None,
-        prediction_url=None,
-        counts=None,
-        error="上传的图片太大，请压缩后再试（限制 20MB）。",
-        available_models=list_models(),
-        selected_model=None,
-    ), 413
+    return (
+        render_template(
+            "index.html",
+            original_url=None,
+            prediction_url=None,
+            counts=None,
+            error="上传的图片太大，请压缩后再试（限制 20MB）。",
+            available_models=list_models(),
+            selected_model=None,
+        ),
+        413,
+    )
 
 
 @app.route("/clear_cache", methods=["POST"])
