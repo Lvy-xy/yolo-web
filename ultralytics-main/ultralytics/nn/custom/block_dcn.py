@@ -4,7 +4,6 @@ from torchvision.ops import DeformConv2d
 
 #以此绝对路径导入官方模块，确保解耦
 from ultralytics.nn.modules.block import C2f, Bottleneck
-from ultralytics.nn.modules.conv import Conv, autopad
 
 class DeformConv(nn.Module):
     """
