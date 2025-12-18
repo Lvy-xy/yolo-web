@@ -9,15 +9,14 @@
 <body>
   <header>
     <h1>番茄花果识别</h1>
-    <p>上传图片、拍照或实时摄像，模型预测番茄花与果实并输出数量统计。</p>
+    <p>上传图片或手机拍照，获取番茄花果识别结果与数量统计。</p>
   </header>
 
-  <main>
-    <section class="card">
+  <main class="layout">
+    <section class="panel card">
       <div class="tabs">
         <button class="tab active" data-tab="upload">上传图片</button>
         <button class="tab" data-tab="camera">拍照上传图片</button>
-        <button class="tab" data-tab="live">摄像头实时识别</button>
       </div>
 
       <div class="tab-content" id="tab-upload">
@@ -53,48 +52,28 @@
           </select>
         </div>
         <div class="camera-box">
-          <video id="video" autoplay playsinline></video>
-          <canvas id="canvas" class="hidden"></canvas>
-          <div class="camera-actions">
-            <button id="start-camera" type="button">打开摄像头</button>
-            <button id="capture" type="button">拍照并识别</button>
+          <div class="field">
+            <label class="upload-label">
+              <span>打开手机摄像头拍照</span>
+              <input id="capture-input" type="file" accept="image/*" capture="environment">
+            </label>
+            <small class="hint">在手机端会直接调起摄像头，拍完自动上传识别。</small>
           </div>
+          <button id="camera-run" type="button">开始识别</button>
           <p id="camera-error" class="error"></p>
-        </div>
-      </div>
-
-      <div class="tab-content hidden" id="tab-live">
-        <div class="field">
-          <label for="live-model">选择模型</label>
-          <select id="live-model">
-            {% for m in available_models %}
-              <option value="{{ m.name }}" {% if selected_model and selected_model == m.name %}selected{% endif %}>{{ m.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="camera-box">
-          <video id="live-video" autoplay playsinline muted></video>
-          <canvas id="live-canvas" class="hidden"></canvas>
-          <div class="camera-actions">
-            <button id="live-start" type="button">打开摄像头</button>
-            <button id="live-run" type="button">开始实时识别</button>
-            <button id="live-stop" type="button">停止</button>
-          </div>
-          <p id="live-status" class="status"></p>
-          <p id="live-error" class="error"></p>
         </div>
       </div>
     </section>
 
-    <section class="results">
-      <div class="card">
+    <section class="content">
+      <div class="card full-width">
         <h2>原图</h2>
         <div class="image-box">
           <img id="original-image" src="{{ original_url or '' }}" alt="用户上传图片" class="{% if not original_url %}hidden{% endif %}">
           <div id="original-placeholder" class="placeholder {% if original_url %}hidden{% endif %}">原图会显示在这里</div>
         </div>
       </div>
-      <div class="card">
+      <div class="card full-width">
         <h2>预测结果</h2>
         <div class="image-box">
           <img id="prediction-image" src="{{ prediction_url or '' }}" alt="模型预测图片" class="{% if not prediction_url %}hidden{% endif %}">
@@ -103,7 +82,7 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card stats">
       <div class="card-header">
         <h2>识别统计</h2>
         <button id="clear-cache" type="button" class="ghost">清理历史缓存</button>
@@ -131,32 +110,19 @@
     const predictionPlaceholder = document.getElementById('prediction-placeholder');
     const countsContainer = document.getElementById('counts');
     const tabs = document.querySelectorAll('.tab');
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const startCameraBtn = document.getElementById('start-camera');
-    const captureBtn = document.getElementById('capture');
+    const captureInput = document.getElementById('capture-input');
+    const cameraRunBtn = document.getElementById('camera-run');
     const cameraError = document.getElementById('camera-error');
     const cameraModelSelect = document.getElementById('camera-model');
-    const liveVideo = document.getElementById('live-video');
-    const liveCanvas = document.getElementById('live-canvas');
-    const liveStart = document.getElementById('live-start');
-    const liveRun = document.getElementById('live-run');
-    const liveStop = document.getElementById('live-stop');
-    const liveStatus = document.getElementById('live-status');
-    const liveError = document.getElementById('live-error');
-    const liveModelSelect = document.getElementById('live-model');
     const clearCacheBtn = document.getElementById('clear-cache');
     const cacheStatus = document.getElementById('cache-status');
-    let stream = null;
-    let liveInterval = null;
-    let liveSending = false;
     let activeTab = 'upload';
+    let cameraFile = null;
 
     const initialCounts = {{ counts|tojson|default('null') }} || {};
     const states = {
       upload: { original: {{ (original_url or '')|tojson }}, prediction: {{ (prediction_url or '')|tojson }}, counts: initialCounts, message: null },
       camera: { original: '', prediction: '', counts: {}, message: null },
-      live: { original: '', prediction: '', counts: {}, message: null },
     };
 
     function renderCounts(counts, message) {
@@ -228,111 +194,46 @@
       });
     });
 
-    async function startCamera() {
-      try {
-        if (!stream) {
-          stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        }
-        if (video) video.srcObject = stream;
-        if (liveVideo) liveVideo.srcObject = stream;
-        cameraError.textContent = '';
-        liveError.textContent = '';
-      } catch (err) {
-        cameraError.textContent = '无法访问摄像头，请检查权限或设备。';
-        liveError.textContent = '无法访问摄像头，请检查权限或设备。';
-      }
-    }
-
-    async function captureAndPredict() {
-      if (!stream) {
-        cameraError.textContent = '请先打开摄像头。';
-        return;
-      }
-      const context = canvas.getContext('2d');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob(async (blob) => {
-        if (!blob) return;
-        const formData = new FormData();
-        formData.append('image', blob, 'capture.png');
-        formData.append('model_path', cameraModelSelect.value);
-
-        const snapshotUrl = URL.createObjectURL(blob);
-        setState('camera', { original: snapshotUrl, prediction: '', counts: {}, message: '识别中...' });
-
-        try {
-          const response = await fetch('/predict', { method: 'POST', body: formData });
-          const data = await response.json();
-          if (!response.ok || data.error) {
-            cameraError.textContent = data.error || '识别失败';
-            setState('camera', { prediction: '', counts: {}, message: '识别失败' });
-            return;
-          }
-          setState('camera', { original: data.original_url, prediction: data.prediction_url, counts: data.counts || {}, message: null });
-          cameraError.textContent = '';
-        } catch (err) {
-          cameraError.textContent = '识别请求失败，请重试。';
-          setState('camera', { prediction: '', counts: {}, message: '识别失败' });
-        }
-      }, 'image/png');
-    }
-
-    async function captureLiveFrame() {
-      if (liveSending || !stream) return;
-      if (!liveVideo.videoWidth || !liveVideo.videoHeight) return;
-      liveSending = true;
-      liveStatus.textContent = '实时识别中...';
-      const context = liveCanvas.getContext('2d');
-      liveCanvas.width = liveVideo.videoWidth;
-      liveCanvas.height = liveVideo.videoHeight;
-      context.drawImage(liveVideo, 0, 0, liveCanvas.width, liveCanvas.height);
-
-      const blob = await new Promise(resolve => liveCanvas.toBlob(resolve, 'image/jpeg', 0.8));
-      if (!blob) {
-        liveSending = false;
-        return;
-      }
-
+    async function predictBlob(tabKey, blob, modelValue, filename) {
       const formData = new FormData();
-      formData.append('image', blob, 'live.jpg');
-      formData.append('model_path', liveModelSelect.value);
+      formData.append('image', blob, filename || 'capture.jpg');
+      formData.append('model_path', modelValue);
+
+      setState(tabKey, { prediction: '', counts: {}, message: '识别中...' });
 
       try {
         const response = await fetch('/predict', { method: 'POST', body: formData });
         const data = await response.json();
         if (!response.ok || data.error) {
-          liveError.textContent = data.error || '实时识别失败';
-          liveStatus.textContent = '已暂停';
+          const errMsg = data.error || '识别失败';
+          cameraError.textContent = errMsg;
+          setState(tabKey, { prediction: '', counts: {}, message: errMsg });
           return;
         }
-        setState('live', { original: data.original_url, prediction: data.prediction_url, counts: data.counts || {}, message: null });
-        liveError.textContent = '';
+        setState(tabKey, { original: data.original_url, prediction: data.prediction_url, counts: data.counts || {}, message: null });
+        cameraError.textContent = '';
       } catch (err) {
-        liveError.textContent = '实时识别请求失败';
-      } finally {
-        liveSending = false;
+        cameraError.textContent = '识别请求失败，请重试。';
+        setState(tabKey, { prediction: '', counts: {}, message: '识别失败' });
       }
     }
 
-    async function startLive() {
-      if (!stream) {
-        await startCamera();
-      }
-      if (liveInterval) return;
-      liveStatus.textContent = '实时识别中...';
-      liveInterval = setInterval(captureLiveFrame, 1200);
-      captureLiveFrame();
-    }
+    captureInput.addEventListener('change', (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      cameraFile = file;
+      const previewUrl = URL.createObjectURL(file);
+      setState('camera', { original: previewUrl, prediction: '', counts: {}, message: '准备识别，请选择模型后点击开始识别' });
+      cameraError.textContent = '';
+    });
 
-    function stopLive() {
-      if (liveInterval) {
-        clearInterval(liveInterval);
-        liveInterval = null;
+    cameraRunBtn.addEventListener('click', () => {
+      if (!cameraFile) {
+        cameraError.textContent = '请先拍照或选择图片。';
+        return;
       }
-      liveStatus.textContent = '已停止';
-      liveSending = false;
-    }
+      predictBlob('camera', cameraFile, cameraModelSelect.value, cameraFile.name || 'capture.jpg');
+    });
 
     function collectKeepFiles() {
       const names = new Set();
@@ -348,6 +249,11 @@
     }
 
     async function clearCache() {
+      const code = prompt('请输入安全码以清理缓存：');
+      if (code !== '888') {
+        cacheStatus.textContent = '安全码错误，未清理缓存。';
+        return;
+      }
       const keep = collectKeepFiles();
       cacheStatus.textContent = '清理中...';
       try {
@@ -364,11 +270,6 @@
       }
     }
 
-    startCameraBtn.addEventListener('click', startCamera);
-    captureBtn.addEventListener('click', captureAndPredict);
-    liveStart.addEventListener('click', startCamera);
-    liveRun.addEventListener('click', startLive);
-    liveStop.addEventListener('click', stopLive);
     clearCacheBtn.addEventListener('click', clearCache);
 
     applyState(activeTab);
