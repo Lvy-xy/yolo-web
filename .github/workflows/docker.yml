@@ -1,16 +1,19 @@
 name: Docker to ACR
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
-        description: "镜像标签（默认 latest）"
+        description: "Image tag (default latest)"
         required: false
         default: "latest"
 
 env:
-  REGISTRY: ${{ secrets.ACR_REGISTRY }} # 例如 registry.cn-hangzhou.aliyuncs.com
-  IMAGE_NAME: ${{ secrets.ACR_IMAGE_NAME }} # 例如 namespace/yolo-web
+  REGISTRY: ${{ secrets.ACR_REGISTRY }}
+  IMAGE_NAME: ${{ secrets.ACR_IMAGE_NAME }}
+  TAG: ${{ github.event.inputs.tag || github.sha }}
 
 jobs:
   build-and-push:
@@ -35,6 +38,6 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           platforms: linux/amd64
