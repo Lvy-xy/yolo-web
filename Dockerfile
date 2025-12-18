@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-COPY ultralytics ./ultralytics
+COPY ultralytics ./ultralytics-main
 
 # 先装较小的 CPU torch，再装其余依赖；pip 用清华源
 RUN pip install --upgrade pip && \
