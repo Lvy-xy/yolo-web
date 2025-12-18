@@ -1,12 +1,13 @@
 [tool.black]
 line-length = 120
 target-version = ["py310"]
-exclude = '''
+extend-exclude = '''
 (?x)(
-  ^ultralytics-main/
-  |^\.venv/
-  |^model/
-  |^static/
+  ultralytics-main/
+  | \.venv/
+  | model/
+  | static/
+  | \.ipynb$
 )
 '''
 
