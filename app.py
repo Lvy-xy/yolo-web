@@ -193,7 +193,9 @@ def index():
             context["error"] = f"Inference failed: {exc}"
             return render_template("index.html", **context)
 
-        original_rel = web_copy.relative_to(STATIC_DIR) if web_copy.is_relative_to(STATIC_DIR) else Path("uploads") / web_copy.name
+        original_rel = (
+            web_copy.relative_to(STATIC_DIR) if web_copy.is_relative_to(STATIC_DIR) else Path("uploads") / web_copy.name
+        )
 
         context.update(
             original_url=url_for("static", filename=str(original_rel).replace("\\", "/")),
@@ -251,9 +253,7 @@ def predict():
     if not _is_allowed(upload.filename):
         return jsonify({"error": f"仅支持: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
     try:
-        original_url, prediction_url, counts = _process_upload(
-            upload, selected_model_name, confidence_value, iou_value
-        )
+        original_url, prediction_url, counts = _process_upload(upload, selected_model_name, confidence_value, iou_value)
     except Exception as exc:  # pragma: no cover
         return jsonify({"error": str(exc)}), 500
 
