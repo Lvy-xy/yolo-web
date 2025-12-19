@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import uuid
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -15,19 +16,31 @@ MODEL_DIR = BASE_DIR / "model"
 DEFAULT_MODEL = MODEL_DIR / "yolov8n.pt"
 STATIC_DIR = BASE_DIR / "static"
 UPLOAD_DIR = STATIC_DIR / "uploads"
+UPLOAD_WEB_DIR = STATIC_DIR / "uploads_web"
 PRED_DIR = STATIC_DIR / "predictions"
 ALLOWED_EXTENSIONS: List[str] = [".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"]
 MAX_IMAGE_DIMENSION = 1280
 DEFAULT_QUALITY = 85
+DEFAULT_CONFIDENCE = 0.25
+DEFAULT_IOU = 0.7
 
 
 def _ensure_directories() -> None:
-    for folder in (UPLOAD_DIR, PRED_DIR):
+    for folder in (UPLOAD_DIR, UPLOAD_WEB_DIR, PRED_DIR):
         folder.mkdir(parents=True, exist_ok=True)
 
 
 def _is_allowed(filename: str) -> bool:
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
+
+
+def _parse_threshold(value: str | None, default: float, min_value: float = 0.0, max_value: float = 1.0) -> float:
+    """Parse user-provided threshold values safely."""
+    try:
+        parsed = float(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+    return max(min_value, min(parsed, max_value))
 
 
 def compress_image_for_web(
@@ -89,9 +102,22 @@ def list_models() -> List[Path]:
     return sorted(p for p in MODEL_DIR.iterdir() if p.suffix in {".pt", ".onnx", ".engine"})
 
 
-def run_inference(model: YOLO, image_path: Path, output_path: Path) -> Dict[str, int]:
+def _prepare_web_copy(source_path: Path) -> Path:
+    """Create a compressed copy of the source image for web display without altering the source."""
+    target = UPLOAD_WEB_DIR / source_path.name
+    try:
+        shutil.copyfile(source_path, target)
+    except OSError:
+        return source_path
+    compress_image_for_web(target)
+    return target
+
+
+def run_inference(
+    model: YOLO, image_path: Path, output_path: Path, conf: float = DEFAULT_CONFIDENCE, iou: float = DEFAULT_IOU
+) -> Dict[str, int]:
     """Run the YOLO model on the given image and save annotated output."""
-    results = model(str(image_path))
+    results = model.predict(source=str(image_path), conf=conf, iou=iou, verbose=False)
     result = results[0]
     result.save(filename=str(output_path))
     compress_image_for_web(output_path)
@@ -114,19 +140,36 @@ def index():
         "error": None,
         "available_models": available_models,
         "selected_model": None,
+        "confidence": DEFAULT_CONFIDENCE,
+        "iou": DEFAULT_IOU,
+        "image_token": None,
     }
 
     if request.method == "POST":
         upload = request.files.get("image")
         selected_model_name = request.form.get("model_path")
+        confidence_value = _parse_threshold(request.form.get("confidence"), DEFAULT_CONFIDENCE)
+        iou_value = _parse_threshold(request.form.get("iou"), DEFAULT_IOU)
+        existing_image_token = request.form.get("existing_image")
         selected_model_path = None
 
-        if not upload or upload.filename == "":
-            context["error"] = "Please choose an image to upload."
-            return render_template("index.html", **context)
+        context.update({"confidence": confidence_value, "iou": iou_value})
 
-        if not _is_allowed(upload.filename):
-            context["error"] = f"Unsupported file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"
+        saved_path = None
+        if upload and upload.filename:
+            if not _is_allowed(upload.filename):
+                context["error"] = f"Unsupported file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"
+                return render_template("index.html", **context)
+            unique_name = f"{uuid.uuid4().hex}{Path(upload.filename).suffix.lower()}"
+            saved_path = UPLOAD_DIR / unique_name
+            upload.save(saved_path)
+        elif existing_image_token:
+            saved_path = UPLOAD_DIR / Path(existing_image_token).name
+            if not saved_path.exists():
+                context["error"] = "Original image not found. Please re-upload."
+                return render_template("index.html", **context)
+        else:
+            context["error"] = "Please choose an image to upload."
             return render_template("index.html", **context)
 
         if selected_model_name:
@@ -138,23 +181,23 @@ def index():
             context["error"] = "Selected model not found. Please choose a valid model file."
             return render_template("index.html", **context)
 
-        unique_name = f"{uuid.uuid4().hex}{Path(upload.filename).suffix.lower()}"
-        saved_path = UPLOAD_DIR / unique_name
-        pred_path = PRED_DIR / unique_name
-
-        upload.save(saved_path)
+        pred_name = f"{uuid.uuid4().hex}{saved_path.suffix.lower()}"
+        pred_path = PRED_DIR / pred_name
 
         try:
             model = _load_model(selected_model_path)
-            counts = run_inference(model, saved_path, pred_path)
-            compress_image_for_web(saved_path)
+            counts = run_inference(model, saved_path, pred_path, conf=confidence_value, iou=iou_value)
+            web_copy = _prepare_web_copy(saved_path)
+            context["image_token"] = saved_path.name
         except Exception as exc:  # pragma: no cover
             context["error"] = f"Inference failed: {exc}"
             return render_template("index.html", **context)
 
+        original_rel = web_copy.relative_to(STATIC_DIR) if web_copy.is_relative_to(STATIC_DIR) else Path("uploads") / web_copy.name
+
         context.update(
-            original_url=url_for("static", filename=f"uploads/{unique_name}"),
-            prediction_url=url_for("static", filename=f"predictions/{unique_name}"),
+            original_url=url_for("static", filename=str(original_rel).replace("\\", "/")),
+            prediction_url=url_for("static", filename=f"predictions/{pred_name}"),
             counts=counts,
             selected_model=selected_model_path.name,
         )
@@ -162,7 +205,9 @@ def index():
     return render_template("index.html", **context)
 
 
-def _process_upload(file_storage, selected_model_name: str | None) -> Tuple[str, str, Dict[str, int]]:
+def _process_upload(
+    file_storage, selected_model_name: str | None, confidence: float, iou: float
+) -> Tuple[str, str, Dict[str, int]]:
     available_models = list_models()
     if selected_model_name:
         selected_model_path = MODEL_DIR / selected_model_name
@@ -176,16 +221,20 @@ def _process_upload(file_storage, selected_model_name: str | None) -> Tuple[str,
 
     unique_name = f"{uuid.uuid4().hex}{Path(file_storage.filename).suffix.lower()}"
     saved_path = UPLOAD_DIR / unique_name
-    pred_path = PRED_DIR / unique_name
+    pred_name = f"{uuid.uuid4().hex}{saved_path.suffix.lower()}"
+    pred_path = PRED_DIR / pred_name
     file_storage.save(saved_path)
 
     model = _load_model(selected_model_path)
-    counts = run_inference(model, saved_path, pred_path)
-    compress_image_for_web(saved_path)
+    counts = run_inference(model, saved_path, pred_path, conf=confidence, iou=iou)
+    web_copy = _prepare_web_copy(saved_path)
+    original_rel = (
+        web_copy.relative_to(STATIC_DIR) if web_copy.is_relative_to(STATIC_DIR) else Path("uploads") / web_copy.name
+    )
 
     return (
-        url_for("static", filename=f"uploads/{unique_name}"),
-        url_for("static", filename=f"predictions/{unique_name}"),
+        url_for("static", filename=str(original_rel).replace("\\", "/")),
+        url_for("static", filename=f"predictions/{pred_name}"),
         counts,
     )
 
@@ -194,13 +243,17 @@ def _process_upload(file_storage, selected_model_name: str | None) -> Tuple[str,
 def predict():
     upload = request.files.get("image")
     selected_model_name = request.form.get("model_path")
+    confidence_value = _parse_threshold(request.form.get("confidence"), DEFAULT_CONFIDENCE)
+    iou_value = _parse_threshold(request.form.get("iou"), DEFAULT_IOU)
 
     if not upload or upload.filename == "":
         return jsonify({"error": "请上传图片"}), 400
     if not _is_allowed(upload.filename):
         return jsonify({"error": f"仅支持: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
     try:
-        original_url, prediction_url, counts = _process_upload(upload, selected_model_name)
+        original_url, prediction_url, counts = _process_upload(
+            upload, selected_model_name, confidence_value, iou_value
+        )
     except Exception as exc:  # pragma: no cover
         return jsonify({"error": str(exc)}), 500
 
@@ -224,6 +277,9 @@ def handle_file_too_large(_error):  # pragma: no cover
             error="上传的图片太大，请压缩后再试（限制 20MB）。",
             available_models=list_models(),
             selected_model=None,
+            confidence=DEFAULT_CONFIDENCE,
+            iou=DEFAULT_IOU,
+            image_token=None,
         ),
         413,
     )
@@ -235,7 +291,7 @@ def clear_cache():
     payload = request.get_json(force=True, silent=True) or {}
     keep_files = {Path(name).name for name in payload.get("keep", []) if name}
     removed = []
-    for folder in (UPLOAD_DIR, PRED_DIR):
+    for folder in (UPLOAD_DIR, UPLOAD_WEB_DIR, PRED_DIR):
         if not folder.exists():
             continue
         for file in folder.iterdir():

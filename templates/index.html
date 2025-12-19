@@ -24,7 +24,7 @@
           <div class="field">
             <label class="upload-label">
               <span>选择图片</span>
-              <input id="file-input" type="file" name="image" accept="image/*" required>
+              <input id="file-input" type="file" name="image" accept="image/*">
             </label>
           </div>
           <div class="field">
@@ -35,6 +35,21 @@
               {% endfor %}
             </select>
           </div>
+          <div class="field slider-field">
+            <label class="slider-label" for="confidence">
+              <span>置信度阈值</span>
+              <input type="number" id="confidence-value" class="slider-value-input" min="0" max="1" step="0.01" value="{{ "%.2f"|format(confidence|default(0.25)) }}">
+            </label>
+            <input type="range" name="confidence" id="confidence" min="0" max="1" step="0.01" value="{{ "%.2f"|format(confidence|default(0.25)) }}">
+          </div>
+          <div class="field slider-field">
+            <label class="slider-label" for="iou">
+              <span>IOU 阈值</span>
+              <input type="number" id="iou-value" class="slider-value-input" min="0" max="1" step="0.01" value="{{ "%.2f"|format(iou|default(0.7)) }}">
+            </label>
+            <input type="range" name="iou" id="iou" min="0" max="1" step="0.01" value="{{ "%.2f"|format(iou|default(0.7)) }}">
+          </div>
+          <input type="hidden" name="existing_image" id="existing_image" value="{{ image_token or '' }}">
           <button type="submit">开始识别</button>
         </form>
         {% if error %}
@@ -58,6 +73,20 @@
               <input id="capture-input" type="file" accept="image/*" capture="environment">
             </label>
             <small class="hint">在手机端会直接调起摄像头，拍完自动上传识别。</small>
+          </div>
+          <div class="field slider-field">
+            <label class="slider-label" for="camera-confidence">
+              <span>置信度阈值</span>
+              <input type="number" id="camera-confidence-value" class="slider-value-input" min="0" max="1" step="0.01" value="{{ "%.2f"|format(confidence|default(0.25)) }}">
+            </label>
+            <input type="range" id="camera-confidence" min="0" max="1" step="0.01" value="{{ "%.2f"|format(confidence|default(0.25)) }}">
+          </div>
+          <div class="field slider-field">
+            <label class="slider-label" for="camera-iou">
+              <span>IOU 阈值</span>
+              <input type="number" id="camera-iou-value" class="slider-value-input" min="0" max="1" step="0.01" value="{{ "%.2f"|format(iou|default(0.7)) }}">
+            </label>
+            <input type="range" id="camera-iou" min="0" max="1" step="0.01" value="{{ "%.2f"|format(iou|default(0.7)) }}">
           </div>
           <button id="camera-run" type="button">开始识别</button>
           <p id="camera-error" class="error"></p>
@@ -114,8 +143,17 @@
     const cameraRunBtn = document.getElementById('camera-run');
     const cameraError = document.getElementById('camera-error');
     const cameraModelSelect = document.getElementById('camera-model');
+    const confidenceInput = document.getElementById('confidence');
+    const confidenceValue = document.getElementById('confidence-value');
+    const iouInput = document.getElementById('iou');
+    const iouValue = document.getElementById('iou-value');
+    const cameraConfidenceInput = document.getElementById('camera-confidence');
+    const cameraConfidenceValue = document.getElementById('camera-confidence-value');
+    const cameraIouInput = document.getElementById('camera-iou');
+    const cameraIouValue = document.getElementById('camera-iou-value');
     const clearCacheBtn = document.getElementById('clear-cache');
     const cacheStatus = document.getElementById('cache-status');
+    const existingImageInput = document.getElementById('existing_image');
     let activeTab = 'upload';
     let cameraFile = null;
 
@@ -124,6 +162,33 @@
       upload: { original: {{ (original_url or '')|tojson }}, prediction: {{ (prediction_url or '')|tojson }}, counts: initialCounts, message: null },
       camera: { original: '', prediction: '', counts: {}, message: null },
     };
+
+    function setRangeFill(rangeEl) {
+      if (!rangeEl) return;
+      const min = Number(rangeEl.min || 0);
+      const max = Number(rangeEl.max || 1);
+      const val = Number(rangeEl.value || min);
+      const percent = ((val - min) / (max - min || 1)) * 100;
+      rangeEl.style.setProperty('--slider-pct', `${percent}%`);
+    }
+
+    function bindSliderPair(rangeEl, numberEl) {
+      if (!rangeEl || !numberEl) return;
+      const clamp = (val) => {
+        const parsed = Number.parseFloat(val);
+        if (Number.isNaN(parsed)) return Math.min(1, Math.max(0, Number.parseFloat(rangeEl.value) || 0));
+        return Math.min(1, Math.max(0, parsed));
+      };
+      const sync = (val) => {
+        const clamped = clamp(val);
+        rangeEl.value = clamped.toFixed(2);
+        numberEl.value = clamped.toFixed(2);
+        setRangeFill(rangeEl);
+      };
+      rangeEl.addEventListener('input', () => sync(rangeEl.value));
+      numberEl.addEventListener('input', () => sync(numberEl.value));
+      sync(numberEl.value || rangeEl.value);
+    }
 
     function renderCounts(counts, message) {
       countsContainer.innerHTML = '';
@@ -176,9 +241,15 @@
       }
     }
 
+    bindSliderPair(confidenceInput, confidenceValue);
+    bindSliderPair(iouInput, iouValue);
+    bindSliderPair(cameraConfidenceInput, cameraConfidenceValue);
+    bindSliderPair(cameraIouInput, cameraIouValue);
+
     fileInput.addEventListener('change', (event) => {
       const file = event.target.files?.[0];
       if (!file) return;
+      if (existingImageInput) existingImageInput.value = '';
       const url = URL.createObjectURL(file);
       setState('upload', { original: url, prediction: '', counts: {}, message: '等待识别结果...' });
     });
@@ -194,10 +265,16 @@
       });
     });
 
-    async function predictBlob(tabKey, blob, modelValue, filename) {
+    async function predictBlob(tabKey, blob, modelValue, thresholds, filename) {
       const formData = new FormData();
       formData.append('image', blob, filename || 'capture.jpg');
       formData.append('model_path', modelValue);
+      if (thresholds?.confidence !== undefined) {
+        formData.append('confidence', thresholds.confidence);
+      }
+      if (thresholds?.iou !== undefined) {
+        formData.append('iou', thresholds.iou);
+      }
 
       setState(tabKey, { prediction: '', counts: {}, message: '识别中...' });
 
@@ -232,7 +309,13 @@
         cameraError.textContent = '请先拍照或选择图片。';
         return;
       }
-      predictBlob('camera', cameraFile, cameraModelSelect.value, cameraFile.name || 'capture.jpg');
+      predictBlob(
+        'camera',
+        cameraFile,
+        cameraModelSelect.value,
+        { confidence: cameraConfidenceInput?.value, iou: cameraIouInput?.value },
+        cameraFile.name || 'capture.jpg'
+      );
     });
 
     function collectKeepFiles() {
