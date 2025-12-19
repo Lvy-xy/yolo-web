@@ -51,6 +51,7 @@
           </div>
           <input type="hidden" name="existing_image" id="existing_image" value="{{ image_token or '' }}">
           <button type="submit">开始识别</button>
+          <p id="upload-status" class="status"></p>
         </form>
         {% if error %}
           <p class="error">{{ error }}</p>
@@ -89,6 +90,7 @@
             <input type="range" id="camera-iou" min="0" max="1" step="0.01" value="{{ "%.2f"|format(iou|default(0.7)) }}">
           </div>
           <button id="camera-run" type="button">开始识别</button>
+          <p id="camera-status" class="status"></p>
           <p id="camera-error" class="error"></p>
         </div>
       </div>
@@ -154,6 +156,9 @@
     const clearCacheBtn = document.getElementById('clear-cache');
     const cacheStatus = document.getElementById('cache-status');
     const existingImageInput = document.getElementById('existing_image');
+    const uploadForm = document.querySelector('#tab-upload form');
+    const uploadStatus = document.getElementById('upload-status');
+    const cameraStatus = document.getElementById('camera-status');
     let activeTab = 'upload';
     let cameraFile = null;
 
@@ -277,6 +282,7 @@
       }
 
       setState(tabKey, { prediction: '', counts: {}, message: '识别中...' });
+      if (cameraStatus) cameraStatus.textContent = '正在识别...';
 
       try {
         const response = await fetch('/predict', { method: 'POST', body: formData });
@@ -292,6 +298,8 @@
       } catch (err) {
         cameraError.textContent = '识别请求失败，请重试。';
         setState(tabKey, { prediction: '', counts: {}, message: '识别失败' });
+      } finally {
+        if (cameraStatus) cameraStatus.textContent = '';
       }
     }
 
@@ -317,6 +325,12 @@
         cameraFile.name || 'capture.jpg'
       );
     });
+
+    if (uploadForm) {
+      uploadForm.addEventListener('submit', () => {
+        if (uploadStatus) uploadStatus.textContent = '正在识别...';
+      });
+    }
 
     function collectKeepFiles() {
       const names = new Set();
