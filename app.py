@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from flask import Flask, jsonify, render_template, request, url_for
+from PIL import Image
 from werkzeug.exceptions import RequestEntityTooLarge
 from ultralytics import YOLO
 
@@ -16,6 +17,8 @@ STATIC_DIR = BASE_DIR / "static"
 UPLOAD_DIR = STATIC_DIR / "uploads"
 PRED_DIR = STATIC_DIR / "predictions"
 ALLOWED_EXTENSIONS: List[str] = [".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"]
+MAX_IMAGE_DIMENSION = 1280
+DEFAULT_QUALITY = 85
 
 
 def _ensure_directories() -> None:
@@ -25,6 +28,41 @@ def _ensure_directories() -> None:
 
 def _is_allowed(filename: str) -> bool:
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
+
+
+def compress_image_for_web(image_path: Path, max_dimension: int = MAX_IMAGE_DIMENSION, quality: int = DEFAULT_QUALITY) -> None:
+    """Downscale and compress an image in-place for faster web delivery."""
+    if not image_path.exists():
+        return
+
+    try:
+        with Image.open(image_path) as img:
+            img_format = (img.format or image_path.suffix.lstrip(".") or "JPEG").upper()
+            valid_formats = {"JPEG", "JPG", "PNG", "WEBP", "BMP", "GIF"}
+            if img_format not in valid_formats:
+                img_format = "JPEG"
+            if img_format == "GIF":  # keep animated gifs untouched
+                return
+
+            # Preserve aspect ratio while constraining the longest side.
+            img.thumbnail((max_dimension, max_dimension), Image.LANCZOS)
+
+            save_kwargs = {"optimize": True}
+            if img_format in {"JPEG", "JPG"}:
+                save_kwargs["quality"] = quality
+                img = img.convert("RGB")
+            elif img_format == "WEBP":
+                save_kwargs.update({"quality": quality, "method": 6})
+                img = img.convert("RGB")
+            elif img_format == "PNG":
+                save_kwargs["compress_level"] = 6
+            elif img_format == "BMP":
+                img = img.convert("RGB")
+
+            img.save(image_path, format=img_format, **save_kwargs)
+    except Exception:
+        # If compression fails, keep the original file to avoid breaking the response.
+        return
 
 
 app = Flask(__name__)
@@ -54,6 +92,7 @@ def run_inference(model: YOLO, image_path: Path, output_path: Path) -> Dict[str,
     results = model(str(image_path))
     result = results[0]
     result.save(filename=str(output_path))
+    compress_image_for_web(output_path)
 
     counts: Dict[str, int] = {}
     for cls_idx in result.boxes.cls.tolist():
@@ -106,6 +145,7 @@ def index():
         try:
             model = _load_model(selected_model_path)
             counts = run_inference(model, saved_path, pred_path)
+            compress_image_for_web(saved_path)
         except Exception as exc:  # pragma: no cover
             context["error"] = f"Inference failed: {exc}"
             return render_template("index.html", **context)
@@ -139,6 +179,7 @@ def _process_upload(file_storage, selected_model_name: str | None) -> Tuple[str,
 
     model = _load_model(selected_model_path)
     counts = run_inference(model, saved_path, pred_path)
+    compress_image_for_web(saved_path)
 
     return (
         url_for("static", filename=f"uploads/{unique_name}"),
