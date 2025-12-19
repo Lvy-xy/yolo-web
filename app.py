@@ -30,7 +30,9 @@ def _is_allowed(filename: str) -> bool:
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
 
 
-def compress_image_for_web(image_path: Path, max_dimension: int = MAX_IMAGE_DIMENSION, quality: int = DEFAULT_QUALITY) -> None:
+def compress_image_for_web(
+    image_path: Path, max_dimension: int = MAX_IMAGE_DIMENSION, quality: int = DEFAULT_QUALITY
+) -> None:
     """Downscale and compress an image in-place for faster web delivery."""
     if not image_path.exists():
         return
