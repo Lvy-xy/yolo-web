@@ -169,6 +169,7 @@
     const uploadStatus = document.getElementById('upload-status');
     const cameraStatus = document.getElementById('camera-status');
     let activeTab = 'upload';
+    let uploadFile = null;
     let cameraFile = null;
 
     const initialCounts = {{ counts|tojson|default('null') }} || {};
@@ -276,6 +277,7 @@
       const file = event.target.files?.[0];
       if (!file) return;
       if (existingImageInput) existingImageInput.value = '';
+      uploadFile = file;
       const url = URL.createObjectURL(file);
       setState('upload', { original: url, prediction: '', counts: {}, message: '等待识别结果...' });
     });
@@ -291,7 +293,7 @@
       });
     });
 
-    async function predictBlob(tabKey, blob, modelValue, thresholds, filename) {
+    async function predictBlob(tabKey, blob, modelValue, thresholds, filename, statusEl, errorEl) {
       const formData = new FormData();
       formData.append('image', blob, filename || 'capture.jpg');
       formData.append('model_path', modelValue);
@@ -303,24 +305,36 @@
       }
 
       setState(tabKey, { prediction: '', counts: {}, message: '识别中...' });
-      if (cameraStatus) cameraStatus.textContent = '正在识别...';
+      if (statusEl) statusEl.textContent = '正在识别...';
+      let hasError = false;
 
       try {
         const response = await fetch('/predict', { method: 'POST', body: formData });
         const data = await response.json();
         if (!response.ok || data.error) {
           const errMsg = data.error || '识别失败';
-          cameraError.textContent = errMsg;
+          if (errorEl) {
+            errorEl.textContent = errMsg;
+          } else if (statusEl) {
+            statusEl.textContent = errMsg;
+          }
           setState(tabKey, { prediction: '', counts: {}, message: errMsg });
+          hasError = true;
           return;
         }
         setState(tabKey, { original: data.original_url, prediction: data.prediction_url, counts: data.counts || {}, stage: data.stage || '', message: null });
-        cameraError.textContent = '';
+        if (errorEl) errorEl.textContent = '';
+        if (statusEl) statusEl.textContent = '';
       } catch (err) {
-        cameraError.textContent = '识别请求失败，请重试。';
+        if (errorEl) {
+          errorEl.textContent = '识别请求失败，请重试。';
+        } else if (statusEl) {
+          statusEl.textContent = '识别请求失败，请重试。';
+        }
         setState(tabKey, { prediction: '', counts: {}, message: '识别失败' });
+        hasError = true;
       } finally {
-        if (cameraStatus) cameraStatus.textContent = '';
+        if (statusEl && !hasError) statusEl.textContent = '';
       }
     }
 
@@ -343,13 +357,28 @@
         cameraFile,
         cameraModelSelect.value,
         { confidence: cameraConfidenceInput?.value, iou: cameraIouInput?.value },
-        cameraFile.name || 'capture.jpg'
+        cameraFile.name || 'capture.jpg',
+        cameraStatus,
+        cameraError
       );
     });
 
     if (uploadForm) {
-      uploadForm.addEventListener('submit', () => {
-        if (uploadStatus) uploadStatus.textContent = '正在识别...';
+      uploadForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const file = fileInput?.files?.[0] || uploadFile;
+        if (!file) {
+          if (uploadStatus) uploadStatus.textContent = '请先选择图片。';
+          return;
+        }
+        predictBlob(
+          'upload',
+          file,
+          document.getElementById('model_path')?.value,
+          { confidence: confidenceInput?.value, iou: iouInput?.value },
+          file.name || 'upload.jpg',
+          uploadStatus
+        );
       });
     }
 
