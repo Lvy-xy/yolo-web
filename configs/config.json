@@ -1,0 +1,9 @@
+{
+    "stage_order": [
+        "苗期",
+        "开花结果期",
+        "果实膨大期"
+    ],
+    "current_stage": 2,
+    "fruit_threshold": 3
+}

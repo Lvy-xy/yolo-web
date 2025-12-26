@@ -10,6 +10,8 @@ from PIL import Image
 from werkzeug.exceptions import RequestEntityTooLarge
 from ultralytics import YOLO
 
+from src.measure import Measure
+
 
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_DIR = BASE_DIR / "model"
@@ -23,6 +25,8 @@ MAX_IMAGE_DIMENSION = 1280
 DEFAULT_QUALITY = 85
 DEFAULT_CONFIDENCE = 0.25
 DEFAULT_IOU = 0.7
+FLOWER_KEYS = ("flower", "flowers", "花", "番茄花")
+FRUIT_KEYS = ("fruit", "fruits", "果", "番茄果")
 
 
 def _ensure_directories() -> None:
@@ -85,6 +89,36 @@ app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB upload limit
 
 _ensure_directories()
 model_cache: Dict[str, YOLO] = {}
+growth_measure = Measure()
+
+
+def _to_int(value: object) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _normalize_label(label: str) -> str:
+    return label.strip().lower()
+
+
+def _extract_growth_counts(counts: Dict[str, int]) -> Dict[str, int]:
+    normalized = {_normalize_label(key): _to_int(value) for key, value in counts.items()}
+
+    def pick(keys: Tuple[str, ...]) -> int:
+        for key in keys:
+            if key in normalized:
+                return normalized[key]
+        return 0
+
+    return {"flower": pick(FLOWER_KEYS), "fruit": pick(FRUIT_KEYS)}
+
+
+def _detect_growth_stage(counts: Dict[str, int] | None) -> str | None:
+    if counts is None:
+        return None
+    return growth_measure.ez(_extract_growth_counts(counts))
 
 
 def _load_model(path: Path) -> YOLO:
@@ -137,6 +171,7 @@ def index():
         "original_url": None,
         "prediction_url": None,
         "counts": None,
+        "stage": growth_measure.current_stage,
         "error": None,
         "available_models": available_models,
         "selected_model": None,
@@ -188,6 +223,7 @@ def index():
             model = _load_model(selected_model_path)
             counts = run_inference(model, saved_path, pred_path, conf=confidence_value, iou=iou_value)
             web_copy = _prepare_web_copy(saved_path)
+            stage = _detect_growth_stage(counts)
             context["image_token"] = saved_path.name
         except Exception as exc:  # pragma: no cover
             context["error"] = f"Inference failed: {exc}"
@@ -201,6 +237,7 @@ def index():
             original_url=url_for("static", filename=str(original_rel).replace("\\", "/")),
             prediction_url=url_for("static", filename=f"predictions/{pred_name}"),
             counts=counts,
+            stage=stage,
             selected_model=selected_model_path.name,
         )
 
@@ -254,6 +291,7 @@ def predict():
         return jsonify({"error": f"仅支持: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
     try:
         original_url, prediction_url, counts = _process_upload(upload, selected_model_name, confidence_value, iou_value)
+        stage = _detect_growth_stage(counts)
     except Exception as exc:  # pragma: no cover
         return jsonify({"error": str(exc)}), 500
 
@@ -262,6 +300,7 @@ def predict():
             "original_url": original_url,
             "prediction_url": prediction_url,
             "counts": counts,
+            "stage": stage,
         }
     )
 
@@ -274,6 +313,7 @@ def handle_file_too_large(_error):  # pragma: no cover
             original_url=None,
             prediction_url=None,
             counts=None,
+            stage=growth_measure.current_stage,
             error="上传的图片太大，请压缩后再试（限制 20MB）。",
             available_models=list_models(),
             selected_model=None,
@@ -307,5 +347,14 @@ def clear_cache():
     return jsonify({"removed": removed, "kept": list(keep_files)})
 
 
+@app.route("/reset_config", methods=["POST"])
+def reset_config():
+    """Reset growth stage configuration to defaults."""
+    growth_measure.cfg.reset()
+    stage = growth_measure.reload()
+    return jsonify({"stage": stage})
+
+
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
+

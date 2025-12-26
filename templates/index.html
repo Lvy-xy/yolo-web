@@ -116,7 +116,14 @@
     <section class="card stats">
       <div class="card-header">
         <h2>识别统计</h2>
-        <button id="clear-cache" type="button" class="ghost">清理历史缓存</button>
+        <div class="card-actions">
+          <button id="reset-config" type="button" class="ghost">重置配置</button>
+          <button id="clear-cache" type="button" class="ghost">清理历史缓存</button>
+        </div>
+      </div>
+      <div class="stage-row">
+        <span>当前生长期</span>
+        <span id="stage-value" class="badge stage-badge">{{ stage or '未判定' }}</span>
       </div>
       <div id="counts" class="counts">
         {% if counts %}
@@ -140,6 +147,7 @@
     const predictionImage = document.getElementById('prediction-image');
     const predictionPlaceholder = document.getElementById('prediction-placeholder');
     const countsContainer = document.getElementById('counts');
+    const stageValue = document.getElementById('stage-value');
     const tabs = document.querySelectorAll('.tab');
     const captureInput = document.getElementById('capture-input');
     const cameraRunBtn = document.getElementById('camera-run');
@@ -154,6 +162,7 @@
     const cameraIouInput = document.getElementById('camera-iou');
     const cameraIouValue = document.getElementById('camera-iou-value');
     const clearCacheBtn = document.getElementById('clear-cache');
+    const resetConfigBtn = document.getElementById('reset-config');
     const cacheStatus = document.getElementById('cache-status');
     const existingImageInput = document.getElementById('existing_image');
     const uploadForm = document.querySelector('#tab-upload form');
@@ -163,9 +172,10 @@
     let cameraFile = null;
 
     const initialCounts = {{ counts|tojson|default('null') }} || {};
+    const initialStage = {{ stage|tojson|default('null') }} || '';
     const states = {
-      upload: { original: {{ (original_url or '')|tojson }}, prediction: {{ (prediction_url or '')|tojson }}, counts: initialCounts, message: null },
-      camera: { original: '', prediction: '', counts: {}, message: null },
+      upload: { original: {{ (original_url or '')|tojson }}, prediction: {{ (prediction_url or '')|tojson }}, counts: initialCounts, stage: initialStage, message: null },
+      camera: { original: '', prediction: '', counts: {}, stage: initialStage, message: null },
     };
 
     function setRangeFill(rangeEl) {
@@ -214,8 +224,13 @@
       });
     }
 
+    function renderStage(stage) {
+      if (!stageValue) return;
+      stageValue.textContent = stage || '未判定';
+    }
+
     function applyState(tab) {
-      const state = states[tab] || { original: '', prediction: '', counts: {}, message: null };
+      const state = states[tab] || { original: '', prediction: '', counts: {}, stage: '', message: null };
       if (state.original) {
         originalImage.src = state.original;
         originalImage.classList.remove('hidden');
@@ -237,10 +252,16 @@
       }
 
       renderCounts(state.counts, state.message);
+      renderStage(state.stage);
     }
 
     function setState(tab, data) {
       states[tab] = { ...states[tab], ...data };
+      if (data.stage) {
+        Object.keys(states).forEach(key => {
+          states[key].stage = data.stage;
+        });
+      }
       if (activeTab === tab) {
         applyState(tab);
       }
@@ -293,7 +314,7 @@
           setState(tabKey, { prediction: '', counts: {}, message: errMsg });
           return;
         }
-        setState(tabKey, { original: data.original_url, prediction: data.prediction_url, counts: data.counts || {}, message: null });
+        setState(tabKey, { original: data.original_url, prediction: data.prediction_url, counts: data.counts || {}, stage: data.stage || '', message: null });
         cameraError.textContent = '';
       } catch (err) {
         cameraError.textContent = '识别请求失败，请重试。';
@@ -368,6 +389,25 @@
     }
 
     clearCacheBtn.addEventListener('click', clearCache);
+
+    async function resetConfig() {
+      const confirmed = confirm('确认重置生长期配置吗？');
+      if (!confirmed) return;
+      cacheStatus.textContent = '配置重置中...';
+      try {
+        const response = await fetch('/reset_config', { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(data.error || '重置失败');
+        setState(activeTab, { stage: data.stage || '' });
+        cacheStatus.textContent = `已重置为：${data.stage || '未判定'}`;
+      } catch (err) {
+        cacheStatus.textContent = '重置配置失败，请重试。';
+      }
+    }
+
+    if (resetConfigBtn) {
+      resetConfigBtn.addEventListener('click', resetConfig);
+    }
 
     applyState(activeTab);
   </script>
