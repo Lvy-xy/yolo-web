@@ -4,6 +4,6 @@
         "开花结果期",
         "果实膨大期"
     ],
-    "current_stage": 2,
+    "current_stage": 0,
     "fruit_threshold": 3
 }
